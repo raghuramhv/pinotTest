@@ -1,0 +1,70 @@
+[package]
+name = "pinot-core-rust"
+version = "0.1.0"
+edition = "2021"
+authors = ["Apache Pinot Contributors"]
+description = "High-performance Rust implementations of Apache Pinot core components"
+license = "Apache-2.0"
+repository = "https://github.com/apache/pinot"
+
+[lib]
+name = "pinot_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# JNI bindings for Java interop
+jni = "0.21"
+
+# Roaring bitmaps for efficient set operations
+roaring = "0.10"
+
+# Fast hashing
+ahash = "0.8"
+rustc-hash = "2.0"
+
+# Memory management
+memmap2 = "0.9"
+byteorder = "1.5"
+
+# Numeric types
+num-traits = "0.2"
+ordered-float = { version = "4.2", features = ["serde"] }
+
+# Concurrency
+parking_lot = "0.12"
+crossbeam-utils = "0.8"
+
+# Error handling
+thiserror = "2.0"
+
+# Serialization
+bincode = "1.3"
+serde = { version = "1.0", features = ["derive"] }
+
+[dev-dependencies]
+# Testing
+criterion = "0.5"
+proptest = "1.4"
+rand = "0.8"
+tempfile = "3.10"
+
+[[bench]]
+name = "dictionary_bench"
+harness = false
+
+[[bench]]
+name = "aggregation_bench"
+harness = false
+
+[[bench]]
+name = "bitmap_bench"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+
+[profile.bench]
+lto = true
+codegen-units = 1
