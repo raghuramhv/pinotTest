@@ -85,6 +85,26 @@ pub enum BrokerError {
     #[error("Reduce error: {0}")]
     Reduce(String),
 
+    /// Access denied error (for access control)
+    #[error("Access denied to table '{table}': {reason}")]
+    AccessDenied { table: String, reason: String },
+
+    /// Quota exceeded error
+    #[error("Quota exceeded for {limit_type}: {current}/{limit}")]
+    QuotaExceeded {
+        limit_type: String,
+        limit: u64,
+        current: u64,
+    },
+
+    /// Query too complex
+    #[error("Query complexity {complexity} exceeds maximum allowed {max_allowed}")]
+    QueryTooComplex { complexity: u64, max_allowed: u64 },
+
+    /// Query already cancelled
+    #[error("Query {query_id} has already been cancelled")]
+    QueryAlreadyCancelled { query_id: u64 },
+
     /// IO error
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -148,6 +168,10 @@ impl BrokerError {
             BrokerError::Configuration(_) => "CONFIGURATION_ERROR",
             BrokerError::Internal(_) => "INTERNAL_ERROR",
             BrokerError::Reduce(_) => "REDUCE_ERROR",
+            BrokerError::AccessDenied { .. } => "ACCESS_DENIED",
+            BrokerError::QuotaExceeded { .. } => "QUOTA_EXCEEDED",
+            BrokerError::QueryTooComplex { .. } => "QUERY_TOO_COMPLEX",
+            BrokerError::QueryAlreadyCancelled { .. } => "QUERY_ALREADY_CANCELLED",
             BrokerError::Io(_) => "IO_ERROR",
             BrokerError::Json(_) => "JSON_ERROR",
         }

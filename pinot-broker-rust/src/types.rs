@@ -157,6 +157,18 @@ pub struct BrokerRequest {
     pub timeout_ms: u64,
 }
 
+impl Default for BrokerRequest {
+    fn default() -> Self {
+        Self {
+            request_id: 0,
+            sql: String::new(),
+            table_name: String::new(),
+            query_options: QueryOptions::default(),
+            timeout_ms: 60_000,
+        }
+    }
+}
+
 impl BrokerRequest {
     pub fn new(request_id: u64, sql: String, table_name: String) -> Self {
         Self {

@@ -22,6 +22,9 @@ mod mutable;
 mod traits;
 mod types;
 
+#[cfg(test)]
+mod proptest_tests;
+
 pub use immutable::*;
 pub use mutable::*;
 pub use traits::*;

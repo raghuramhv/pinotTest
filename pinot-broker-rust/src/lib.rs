@@ -6,18 +6,24 @@
 //! - Result merging and aggregation
 //! - Connection pooling with async I/O
 //! - Memory-efficient data table handling
+//! - Access control (RLS/CLS)
+//! - Query quota management
+//! - Query cancellation and timeout handling
 
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
+pub mod access_control;
+pub mod cancellation;
 pub mod config;
 pub mod error;
-pub mod types;
+pub mod jni;
+pub mod metrics;
+pub mod quota;
+pub mod reduce;
 pub mod routing;
 pub mod transport;
-pub mod reduce;
-pub mod metrics;
-pub mod jni;
+pub mod types;
 
 pub use config::BrokerConfig;
 pub use error::{BrokerError, Result};
