@@ -253,7 +253,7 @@ impl ConcurrentQueryTracker {
     }
 
     /// Try to start a query, returns a guard if successful
-    pub fn try_start(&self, user: &str, table: &str) -> Option<QueryGuard> {
+    pub fn try_start(self: &Arc<Self>, user: &str, table: &str) -> Option<QueryGuard> {
         // Check global limit
         let current_global = self.global_count.load(Ordering::Acquire);
         if current_global >= self.global_limit {
@@ -297,6 +297,7 @@ impl ConcurrentQueryTracker {
         Some(QueryGuard {
             user: user.to_string(),
             table: table.to_string(),
+            tracker: Arc::clone(self),
         })
     }
 
@@ -347,6 +348,13 @@ impl ConcurrentQueryTracker {
 pub struct QueryGuard {
     user: String,
     table: String,
+    tracker: Arc<ConcurrentQueryTracker>,
+}
+
+impl Drop for QueryGuard {
+    fn drop(&mut self) {
+        self.tracker.end_query(&self.user, &self.table);
+    }
 }
 
 // ============== Quota Manager ==============
@@ -497,9 +505,11 @@ impl QuotaManager {
     /// Try to acquire a query slot (for concurrent limit)
     pub fn try_acquire_query_slot(&self, user: &str, table: &str) -> Result<QueryGuard> {
         if !self.config.enabled {
+            // When disabled, still return a guard that tracks properly
             return Ok(QueryGuard {
                 user: user.to_string(),
                 table: table.to_string(),
+                tracker: Arc::clone(&self.concurrent_tracker),
             });
         }
 
@@ -596,7 +606,7 @@ mod tests {
 
     #[test]
     fn test_concurrent_tracker() {
-        let tracker = ConcurrentQueryTracker::new(10, 3);
+        let tracker = Arc::new(ConcurrentQueryTracker::new(10, 3));
 
         // Start queries
         let guard1 = tracker.try_start("user1", "table1");

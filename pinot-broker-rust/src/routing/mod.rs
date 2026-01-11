@@ -13,5 +13,5 @@ pub mod adaptive_selector;
 
 pub use instance_selector::{InstanceSelector, BalancedInstanceSelector, SelectionResult};
 pub use segment_pruner::{SegmentPruner, TimePruner, PartitionPruner};
-pub use routing_manager::RoutingManager;
+pub use routing_manager::{RoutingManager, RoutingManagerBuilder};
 pub use adaptive_selector::AdaptiveServerSelector;
