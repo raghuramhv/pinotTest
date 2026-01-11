@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+    Licensed to the Apache Software Foundation (ASF) under one
+    or more contributor license agreements.  See the NOTICE file
+    distributed with this work for additional information
+    regarding copyright ownership.  The ASF licenses this file
+    to you under the Apache License, Version 2.0 (the
+    "License"); you may not use this file except in compliance
+    with the License.  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing,
+    software distributed under the License is distributed on an
+    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+    KIND, either express or implied.  See the License for the
+    specific language governing permissions and limitations
+    under the License.
+
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.apache.pinot</groupId>
+    <artifactId>pinot</artifactId>
+    <version>1.3.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>pinot-query-server-rust</artifactId>
+  <packaging>jar</packaging>
+  <name>Pinot Query Server Rust</name>
+  <description>High-performance Rust implementation of Pinot Query Server with scatter-gather and memory backpressure</description>
+
+  <properties>
+    <pinot.root>${basedir}/..</pinot.root>
+    <cargo.release.profile>release</cargo.release.profile>
+  </properties>
+
+  <build>
+    <resources>
+      <resource>
+        <directory>target/native</directory>
+        <targetPath>native</targetPath>
+      </resource>
+    </resources>
+
+    <plugins>
+      <!-- Build Rust library using Cargo -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.1.0</version>
+        <executions>
+          <execution>
+            <id>cargo-build</id>
+            <phase>compile</phase>
+            <goals>
+              <goal>exec</goal>
+            </goals>
+            <configuration>
+              <executable>cargo</executable>
+              <workingDirectory>${basedir}</workingDirectory>
+              <arguments>
+                <argument>build</argument>
+                <argument>--release</argument>
+              </arguments>
+            </configuration>
+          </execution>
+          <execution>
+            <id>cargo-test</id>
+            <phase>test</phase>
+            <goals>
+              <goal>exec</goal>
+            </goals>
+            <configuration>
+              <executable>cargo</executable>
+              <workingDirectory>${basedir}</workingDirectory>
+              <arguments>
+                <argument>test</argument>
+              </arguments>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- Copy native libraries to resources -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-antrun-plugin</artifactId>
+        <version>3.1.0</version>
+        <executions>
+          <execution>
+            <id>copy-native-libs</id>
+            <phase>compile</phase>
+            <goals>
+              <goal>run</goal>
+            </goals>
+            <configuration>
+              <target>
+                <mkdir dir="${basedir}/target/native/linux-x86_64"/>
+                <mkdir dir="${basedir}/target/native/linux-aarch64"/>
+                <mkdir dir="${basedir}/target/native/darwin-x86_64"/>
+                <mkdir dir="${basedir}/target/native/darwin-aarch64"/>
+                <mkdir dir="${basedir}/target/native/windows-x86_64"/>
+
+                <!-- Copy Linux x86_64 library if exists -->
+                <copy todir="${basedir}/target/native/linux-x86_64" failonerror="false">
+                  <fileset dir="${basedir}/target/release">
+                    <include name="libpinot_query_server.so"/>
+                  </fileset>
+                </copy>
+
+                <!-- Copy macOS library if exists -->
+                <copy todir="${basedir}/target/native/darwin-x86_64" failonerror="false">
+                  <fileset dir="${basedir}/target/release">
+                    <include name="libpinot_query_server.dylib"/>
+                  </fileset>
+                </copy>
+                <copy todir="${basedir}/target/native/darwin-aarch64" failonerror="false">
+                  <fileset dir="${basedir}/target/release">
+                    <include name="libpinot_query_server.dylib"/>
+                  </fileset>
+                </copy>
+
+                <!-- Copy Windows library if exists -->
+                <copy todir="${basedir}/target/native/windows-x86_64" failonerror="false">
+                  <fileset dir="${basedir}/target/release">
+                    <include name="pinot_query_server.dll"/>
+                  </fileset>
+                </copy>
+              </target>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- Package native libraries in JAR -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <archive>
+            <manifest>
+              <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+            </manifest>
+          </archive>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!-- Profile for running benchmarks -->
+    <profile>
+      <id>benchmark</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>cargo-bench</id>
+                <phase>test</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <executable>cargo</executable>
+                  <workingDirectory>${basedir}</workingDirectory>
+                  <arguments>
+                    <argument>bench</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>

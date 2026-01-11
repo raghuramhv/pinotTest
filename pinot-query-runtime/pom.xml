@@ -48,6 +48,11 @@
       <groupId>org.apache.pinot</groupId>
       <artifactId>pinot-timeseries-planner</artifactId>
     </dependency>
+    <dependency>
+      <groupId>org.apache.pinot</groupId>
+      <artifactId>pinot-query-server-rust</artifactId>
+      <optional>true</optional>
+    </dependency>
 
     <dependency>
       <groupId>org.apache.pinot</groupId>
