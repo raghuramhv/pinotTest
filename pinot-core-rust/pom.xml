@@ -1,0 +1,267 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+    Licensed to the Apache Software Foundation (ASF) under one
+    or more contributor license agreements.  See the NOTICE file
+    distributed with this work for additional information
+    regarding copyright ownership.  The ASF licenses this file
+    to you under the Apache License, Version 2.0 (the
+    "License"); you may not use this file except in compliance
+    with the License.  You may obtain a copy of the License at
+
+      http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing,
+    software distributed under the License is distributed on an
+    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+    KIND, either express or implied.  See the License for the
+    specific language governing permissions and limitations
+    under the License.
+
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.apache.pinot</groupId>
+    <artifactId>pinot</artifactId>
+    <version>1.3.0-SNAPSHOT</version>
+  </parent>
+
+  <artifactId>pinot-core-rust</artifactId>
+  <packaging>jar</packaging>
+  <name>Pinot Core Rust Native Library</name>
+  <description>High-performance Rust implementations of Pinot core components</description>
+
+  <properties>
+    <rust.target.dir>${project.basedir}/target</rust.target.dir>
+    <native.lib.dir>${project.build.directory}/classes/native</native.lib.dir>
+  </properties>
+
+  <build>
+    <plugins>
+      <!-- Build Rust library -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>exec-maven-plugin</artifactId>
+        <version>3.1.0</version>
+        <executions>
+          <execution>
+            <id>cargo-build</id>
+            <phase>compile</phase>
+            <goals>
+              <goal>exec</goal>
+            </goals>
+            <configuration>
+              <executable>cargo</executable>
+              <workingDirectory>${project.basedir}</workingDirectory>
+              <arguments>
+                <argument>build</argument>
+                <argument>--release</argument>
+              </arguments>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- Copy native libraries to resources -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-resources-plugin</artifactId>
+        <version>3.3.1</version>
+        <executions>
+          <execution>
+            <id>copy-native-libs</id>
+            <phase>process-classes</phase>
+            <goals>
+              <goal>copy-resources</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${native.lib.dir}</outputDirectory>
+              <resources>
+                <resource>
+                  <directory>${rust.target.dir}/release</directory>
+                  <includes>
+                    <include>*.so</include>
+                    <include>*.dylib</include>
+                    <include>*.dll</include>
+                  </includes>
+                </resource>
+              </resources>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- Organize native libraries by platform -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-antrun-plugin</artifactId>
+        <version>3.1.0</version>
+        <executions>
+          <execution>
+            <id>organize-native-libs</id>
+            <phase>process-classes</phase>
+            <goals>
+              <goal>run</goal>
+            </goals>
+            <configuration>
+              <target>
+                <!-- Detect OS and organize accordingly -->
+                <condition property="is.linux">
+                  <os family="unix" name="Linux"/>
+                </condition>
+                <condition property="is.mac">
+                  <os family="mac"/>
+                </condition>
+                <condition property="is.windows">
+                  <os family="windows"/>
+                </condition>
+
+                <!-- Linux x86_64 -->
+                <mkdir dir="${native.lib.dir}/linux-x86_64"/>
+                <copy todir="${native.lib.dir}/linux-x86_64" failonerror="false">
+                  <fileset dir="${native.lib.dir}" includes="libpinot_core.so"/>
+                </copy>
+
+                <!-- macOS x86_64 -->
+                <mkdir dir="${native.lib.dir}/macos-x86_64"/>
+                <copy todir="${native.lib.dir}/macos-x86_64" failonerror="false">
+                  <fileset dir="${native.lib.dir}" includes="libpinot_core.dylib"/>
+                </copy>
+
+                <!-- macOS aarch64 (Apple Silicon) -->
+                <mkdir dir="${native.lib.dir}/macos-aarch64"/>
+                <copy todir="${native.lib.dir}/macos-aarch64" failonerror="false">
+                  <fileset dir="${native.lib.dir}" includes="libpinot_core.dylib"/>
+                </copy>
+
+                <!-- Windows x86_64 -->
+                <mkdir dir="${native.lib.dir}/windows-x86_64"/>
+                <copy todir="${native.lib.dir}/windows-x86_64" failonerror="false">
+                  <fileset dir="${native.lib.dir}" includes="pinot_core.dll"/>
+                </copy>
+              </target>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
+      <!-- Skip tests if Rust is not available -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <skipTests>true</skipTests>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!-- Profile for skipping Rust build if cargo is not available -->
+    <profile>
+      <id>skip-rust</id>
+      <activation>
+        <property>
+          <name>skip.rust</name>
+          <value>true</value>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>cargo-build</id>
+                <phase>none</phase>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <!-- Profile for cross-compilation to Linux -->
+    <profile>
+      <id>linux-x86_64</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>cargo-build</id>
+                <configuration>
+                  <arguments>
+                    <argument>build</argument>
+                    <argument>--release</argument>
+                    <argument>--target</argument>
+                    <argument>x86_64-unknown-linux-gnu</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <!-- Profile for cross-compilation to macOS x86_64 -->
+    <profile>
+      <id>macos-x86_64</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>cargo-build</id>
+                <configuration>
+                  <arguments>
+                    <argument>build</argument>
+                    <argument>--release</argument>
+                    <argument>--target</argument>
+                    <argument>x86_64-apple-darwin</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+
+    <!-- Profile for cross-compilation to macOS aarch64 (Apple Silicon) -->
+    <profile>
+      <id>macos-aarch64</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>cargo-build</id>
+                <configuration>
+                  <arguments>
+                    <argument>build</argument>
+                    <argument>--release</argument>
+                    <argument>--target</argument>
+                    <argument>aarch64-apple-darwin</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>

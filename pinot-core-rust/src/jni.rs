@@ -1,303 +1,936 @@
 //! JNI bindings for calling Rust from Java
 //!
-//! This module provides JNI-compatible functions that can be called from Java.
-//!
-//! # Usage
-//!
-//! To use these functions from Java:
-//!
-//! 1. Compile this crate as a cdylib:
-//!    ```bash
-//!    cargo build --release
-//!    ```
-//!
-//! 2. Load the library in Java:
-//!    ```java
-//!    System.loadLibrary("pinot_core");
-//!    ```
-//!
-//! 3. Declare native methods:
-//!    ```java
-//!    public class PinotRustBridge {
-//!        static { System.loadLibrary("pinot_core"); }
-//!
-//!        public static native double sumDoubleArray(double[] values);
-//!        public static native long countNonNull(double[] values, long[] nullIndices);
-//!        // ...
-//!    }
-//!    ```
+//! This module provides JNI-compatible functions that can be called from Java code.
+//! Function names follow the JNI naming convention: Java_package_class_method
 
-use jni::JNIEnv;
-use jni::objects::{JClass, JDoubleArray, JIntArray, JLongArray};
+#![allow(unused_mut)]
+
+use jni::objects::{JByteArray, JClass, JDoubleArray, JIntArray, JLongArray, JObject, JObjectArray, JString};
 use jni::sys::{jdouble, jint, jlong};
+use jni::JNIEnv;
+use std::collections::HashMap;
+use std::sync::Mutex as StdMutex;
 
-use crate::aggregation::*;
-use crate::dictionary::*;
-use crate::bitmap::*;
+use crate::dictionary::{OnHeapIntDictionary, OnHeapLongDictionary, OnHeapStringDictionary, Dictionary};
 
-// ============================================================================
-// Aggregation Functions
-// ============================================================================
+// Global storage for dictionary handles
+lazy_static::lazy_static! {
+    static ref INT_DICTIONARIES: StdMutex<HashMap<jlong, OnHeapIntDictionary>> = StdMutex::new(HashMap::new());
+    static ref LONG_DICTIONARIES: StdMutex<HashMap<jlong, OnHeapLongDictionary>> = StdMutex::new(HashMap::new());
+    static ref STRING_DICTIONARIES: StdMutex<HashMap<jlong, OnHeapStringDictionary>> = StdMutex::new(HashMap::new());
+    static ref NEXT_HANDLE: StdMutex<jlong> = StdMutex::new(1);
+}
 
-/// Computes the sum of a double array
+fn get_next_handle() -> jlong {
+    let mut handle = NEXT_HANDLE.lock().unwrap();
+    let current = *handle;
+    *handle += 1;
+    current
+}
+
+// ==================== Aggregation Functions ====================
+
+/// Sum of double array
 #[no_mangle]
-pub extern "system" fn Java_org_apache_pinot_core_rust_PinotRustBridge_sumDoubleArray<'local>(
-    env: JNIEnv<'local>,
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeAggregation_nativeSumDoubleArray<'local>(
+    mut env: JNIEnv<'local>,
     _class: JClass<'local>,
-    array: JDoubleArray<'local>,
+    values: JDoubleArray<'local>,
 ) -> jdouble {
-    let len = match env.get_array_length(&array) {
-        Ok(l) => l as usize,
-        Err(_) => return 0.0,
-    };
-
-    let mut values = vec![0.0f64; len];
-    if env.get_double_array_region(&array, 0, &mut values).is_err() {
+    let len = env.get_array_length(&values).unwrap_or(0) as usize;
+    if len == 0 {
         return 0.0;
     }
 
-    let func = SumAggregationFunction::new();
-    let mut holder = func.create_result_holder();
-    func.aggregate_double(&values, holder.as_mut(), None);
-    holder.get_double()
-}
-
-/// Computes the count of elements
-#[no_mangle]
-pub extern "system" fn Java_org_apache_pinot_core_rust_PinotRustBridge_countDoubleArray<'local>(
-    env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    array: JDoubleArray<'local>,
-) -> jlong {
-    let len = match env.get_array_length(&array) {
-        Ok(l) => l as usize,
-        Err(_) => return 0,
-    };
-
-    len as jlong
-}
-
-/// Computes the minimum value
-#[no_mangle]
-pub extern "system" fn Java_org_apache_pinot_core_rust_PinotRustBridge_minDoubleArray<'local>(
-    env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    array: JDoubleArray<'local>,
-) -> jdouble {
-    let len = match env.get_array_length(&array) {
-        Ok(l) => l as usize,
-        Err(_) => return f64::INFINITY,
-    };
-
-    let mut values = vec![0.0f64; len];
-    if env.get_double_array_region(&array, 0, &mut values).is_err() {
-        return f64::INFINITY;
-    }
-
-    let func = MinAggregationFunction::new();
-    let mut holder = func.create_result_holder();
-    func.aggregate_double(&values, holder.as_mut(), None);
-    holder.get_double()
-}
-
-/// Computes the maximum value
-#[no_mangle]
-pub extern "system" fn Java_org_apache_pinot_core_rust_PinotRustBridge_maxDoubleArray<'local>(
-    env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    array: JDoubleArray<'local>,
-) -> jdouble {
-    let len = match env.get_array_length(&array) {
-        Ok(l) => l as usize,
-        Err(_) => return f64::NEG_INFINITY,
-    };
-
-    let mut values = vec![0.0f64; len];
-    if env.get_double_array_region(&array, 0, &mut values).is_err() {
-        return f64::NEG_INFINITY;
-    }
-
-    let func = MaxAggregationFunction::new();
-    let mut holder = func.create_result_holder();
-    func.aggregate_double(&values, holder.as_mut(), None);
-    holder.get_double()
-}
-
-/// Computes the average value
-#[no_mangle]
-pub extern "system" fn Java_org_apache_pinot_core_rust_PinotRustBridge_avgDoubleArray<'local>(
-    env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    array: JDoubleArray<'local>,
-) -> jdouble {
-    let len = match env.get_array_length(&array) {
-        Ok(l) => l as usize,
-        Err(_) => return 0.0,
-    };
-
-    let mut values = vec![0.0f64; len];
-    if env.get_double_array_region(&array, 0, &mut values).is_err() {
+    let mut buffer = vec![0.0f64; len];
+    if env.get_double_array_region(&values, 0, &mut buffer).is_err() {
         return 0.0;
     }
 
-    let func = AvgAggregationFunction::new();
-    let mut holder = func.create_result_holder();
-    func.aggregate_double(&values, holder.as_mut(), None);
-    holder.get_double()
+    buffer.iter().sum()
 }
 
-// ============================================================================
-// Dictionary Functions
-// ============================================================================
-
-/// Creates a dictionary from int values and returns a handle
-/// The handle can be used in subsequent calls
+/// Sum of double array with null handling
 #[no_mangle]
-pub extern "system" fn Java_org_apache_pinot_core_rust_PinotRustBridge_createIntDictionary<'local>(
-    env: JNIEnv<'local>,
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeAggregation_nativeSumDoubleArrayWithNulls<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    values: JDoubleArray<'local>,
+    null_bitmap: JLongArray<'local>,
+) -> JObject<'local> {
+    let len = env.get_array_length(&values).unwrap_or(0) as usize;
+    if len == 0 {
+        return JObject::null();
+    }
+
+    let mut buffer = vec![0.0f64; len];
+    if env.get_double_array_region(&values, 0, &mut buffer).is_err() {
+        return JObject::null();
+    }
+
+    // Get null bitmap if provided
+    let null_indices: Vec<i64> = if !null_bitmap.is_null() {
+        let null_len = env.get_array_length(&null_bitmap).unwrap_or(0) as usize;
+        if null_len > 0 {
+            let mut null_buffer = vec![0i64; null_len];
+            if env.get_long_array_region(&null_bitmap, 0, &mut null_buffer).is_ok() {
+                null_buffer
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
+    let null_set: std::collections::HashSet<usize> = null_indices.iter().map(|&x| x as usize).collect();
+
+    let mut sum = 0.0;
+    let mut has_value = false;
+    for (i, &v) in buffer.iter().enumerate() {
+        if !null_set.contains(&i) {
+            sum += v;
+            has_value = true;
+        }
+    }
+
+    if !has_value {
+        return JObject::null();
+    }
+
+    // Return boxed Double
+    let double_class = env.find_class("java/lang/Double").unwrap();
+    env.new_object(double_class, "(D)V", &[jni::objects::JValue::Double(sum)])
+        .unwrap_or(JObject::null())
+}
+
+/// Sum of int array
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeAggregation_nativeSumIntArray<'local>(
+    mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     values: JIntArray<'local>,
 ) -> jlong {
-    let len = match env.get_array_length(&values) {
-        Ok(l) => l as usize,
-        Err(_) => return 0,
-    };
-
-    let mut rust_values = vec![0i32; len];
-    if env.get_int_array_region(&values, 0, &mut rust_values).is_err() {
+    let len = env.get_array_length(&values).unwrap_or(0) as usize;
+    if len == 0 {
         return 0;
     }
 
-    let dict = Box::new(OnHeapIntDictionary::from_unsorted(rust_values));
-    Box::into_raw(dict) as jlong
+    let mut buffer = vec![0i32; len];
+    if env.get_int_array_region(&values, 0, &mut buffer).is_err() {
+        return 0;
+    }
+
+    buffer.iter().map(|&x| x as i64).sum()
 }
 
-/// Looks up a value in an int dictionary
+/// Sum of long array
 #[no_mangle]
-pub extern "system" fn Java_org_apache_pinot_core_rust_PinotRustBridge_intDictionaryIndexOf(
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeAggregation_nativeSumLongArray<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    values: JLongArray<'local>,
+) -> jlong {
+    let len = env.get_array_length(&values).unwrap_or(0) as usize;
+    if len == 0 {
+        return 0;
+    }
+
+    let mut buffer = vec![0i64; len];
+    if env.get_long_array_region(&values, 0, &mut buffer).is_err() {
+        return 0;
+    }
+
+    buffer.iter().sum()
+}
+
+/// Min of double array
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeAggregation_nativeMinDoubleArray<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    values: JDoubleArray<'local>,
+) -> jdouble {
+    let len = env.get_array_length(&values).unwrap_or(0) as usize;
+    if len == 0 {
+        return f64::MAX;
+    }
+
+    let mut buffer = vec![0.0f64; len];
+    if env.get_double_array_region(&values, 0, &mut buffer).is_err() {
+        return f64::MAX;
+    }
+
+    buffer.iter().cloned().fold(f64::MAX, f64::min)
+}
+
+/// Min of double array with nulls
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeAggregation_nativeMinDoubleArrayWithNulls<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    values: JDoubleArray<'local>,
+    null_bitmap: JLongArray<'local>,
+) -> JObject<'local> {
+    let len = env.get_array_length(&values).unwrap_or(0) as usize;
+    if len == 0 {
+        return JObject::null();
+    }
+
+    let mut buffer = vec![0.0f64; len];
+    if env.get_double_array_region(&values, 0, &mut buffer).is_err() {
+        return JObject::null();
+    }
+
+    let null_indices: Vec<i64> = if !null_bitmap.is_null() {
+        let null_len = env.get_array_length(&null_bitmap).unwrap_or(0) as usize;
+        if null_len > 0 {
+            let mut null_buffer = vec![0i64; null_len];
+            if env.get_long_array_region(&null_bitmap, 0, &mut null_buffer).is_ok() {
+                null_buffer
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
+    let null_set: std::collections::HashSet<usize> = null_indices.iter().map(|&x| x as usize).collect();
+
+    let mut min: Option<f64> = None;
+    for (i, &v) in buffer.iter().enumerate() {
+        if !null_set.contains(&i) {
+            min = Some(min.map_or(v, |m| m.min(v)));
+        }
+    }
+
+    match min {
+        Some(m) => {
+            let double_class = env.find_class("java/lang/Double").unwrap();
+            env.new_object(double_class, "(D)V", &[jni::objects::JValue::Double(m)])
+                .unwrap_or(JObject::null())
+        }
+        None => JObject::null(),
+    }
+}
+
+/// Min of long array
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeAggregation_nativeMinLongArray<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    values: JLongArray<'local>,
+) -> jlong {
+    let len = env.get_array_length(&values).unwrap_or(0) as usize;
+    if len == 0 {
+        return i64::MAX;
+    }
+
+    let mut buffer = vec![0i64; len];
+    if env.get_long_array_region(&values, 0, &mut buffer).is_err() {
+        return i64::MAX;
+    }
+
+    buffer.iter().cloned().min().unwrap_or(i64::MAX)
+}
+
+/// Max of double array
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeAggregation_nativeMaxDoubleArray<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    values: JDoubleArray<'local>,
+) -> jdouble {
+    let len = env.get_array_length(&values).unwrap_or(0) as usize;
+    if len == 0 {
+        return f64::MIN;
+    }
+
+    let mut buffer = vec![0.0f64; len];
+    if env.get_double_array_region(&values, 0, &mut buffer).is_err() {
+        return f64::MIN;
+    }
+
+    buffer.iter().cloned().fold(f64::MIN, f64::max)
+}
+
+/// Max of double array with nulls
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeAggregation_nativeMaxDoubleArrayWithNulls<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    values: JDoubleArray<'local>,
+    null_bitmap: JLongArray<'local>,
+) -> JObject<'local> {
+    let len = env.get_array_length(&values).unwrap_or(0) as usize;
+    if len == 0 {
+        return JObject::null();
+    }
+
+    let mut buffer = vec![0.0f64; len];
+    if env.get_double_array_region(&values, 0, &mut buffer).is_err() {
+        return JObject::null();
+    }
+
+    let null_indices: Vec<i64> = if !null_bitmap.is_null() {
+        let null_len = env.get_array_length(&null_bitmap).unwrap_or(0) as usize;
+        if null_len > 0 {
+            let mut null_buffer = vec![0i64; null_len];
+            if env.get_long_array_region(&null_bitmap, 0, &mut null_buffer).is_ok() {
+                null_buffer
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        }
+    } else {
+        vec![]
+    };
+
+    let null_set: std::collections::HashSet<usize> = null_indices.iter().map(|&x| x as usize).collect();
+
+    let mut max: Option<f64> = None;
+    for (i, &v) in buffer.iter().enumerate() {
+        if !null_set.contains(&i) {
+            max = Some(max.map_or(v, |m| m.max(v)));
+        }
+    }
+
+    match max {
+        Some(m) => {
+            let double_class = env.find_class("java/lang/Double").unwrap();
+            env.new_object(double_class, "(D)V", &[jni::objects::JValue::Double(m)])
+                .unwrap_or(JObject::null())
+        }
+        None => JObject::null(),
+    }
+}
+
+/// Max of long array
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeAggregation_nativeMaxLongArray<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    values: JLongArray<'local>,
+) -> jlong {
+    let len = env.get_array_length(&values).unwrap_or(0) as usize;
+    if len == 0 {
+        return i64::MIN;
+    }
+
+    let mut buffer = vec![0i64; len];
+    if env.get_long_array_region(&values, 0, &mut buffer).is_err() {
+        return i64::MIN;
+    }
+
+    buffer.iter().cloned().max().unwrap_or(i64::MIN)
+}
+
+/// Avg of double array - returns [sum, count]
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeAggregation_nativeAvgDoubleArray<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    values: JDoubleArray<'local>,
+) -> JDoubleArray<'local> {
+    let len = env.get_array_length(&values).unwrap_or(0) as usize;
+
+    let result = env.new_double_array(2).unwrap();
+
+    if len == 0 {
+        let _ = env.set_double_array_region(&result, 0, &[0.0, 0.0]);
+        return result;
+    }
+
+    let mut buffer = vec![0.0f64; len];
+    if env.get_double_array_region(&values, 0, &mut buffer).is_err() {
+        let _ = env.set_double_array_region(&result, 0, &[0.0, 0.0]);
+        return result;
+    }
+
+    let sum: f64 = buffer.iter().sum();
+    let _ = env.set_double_array_region(&result, 0, &[sum, len as f64]);
+    result
+}
+
+// ==================== Int Dictionary Functions ====================
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeCreateIntDictionary<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    sorted_values: JIntArray<'local>,
+) -> jlong {
+    let len = env.get_array_length(&sorted_values).unwrap_or(0) as usize;
+    if len == 0 {
+        return 0;
+    }
+
+    let mut buffer = vec![0i32; len];
+    if env.get_int_array_region(&sorted_values, 0, &mut buffer).is_err() {
+        return 0;
+    }
+
+    let dict = OnHeapIntDictionary::new(buffer);
+    let handle = get_next_handle();
+
+    let mut dicts = INT_DICTIONARIES.lock().unwrap();
+    dicts.insert(handle, dict);
+
+    handle
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeIntDictionaryIndexOf(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
     value: jint,
 ) -> jint {
-    if handle == 0 {
-        return -1;
+    let dicts = INT_DICTIONARIES.lock().unwrap();
+    match dicts.get(&handle) {
+        Some(dict) => dict.index_of_int(value),
+        None => -1,
     }
-
-    let dict = unsafe { &*(handle as *const OnHeapIntDictionary) };
-    dict.index_of_int(value)
 }
 
-/// Gets a value from an int dictionary by ID
 #[no_mangle]
-pub extern "system" fn Java_org_apache_pinot_core_rust_PinotRustBridge_intDictionaryGet(
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeIntDictionaryGet(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
     dict_id: jint,
 ) -> jint {
-    if handle == 0 {
-        return 0;
+    let dicts = INT_DICTIONARIES.lock().unwrap();
+    match dicts.get(&handle) {
+        Some(dict) => dict.get_int(dict_id).unwrap_or(0),
+        None => 0,
     }
-
-    let dict = unsafe { &*(handle as *const OnHeapIntDictionary) };
-    dict.get_int(dict_id).unwrap_or(0)
 }
 
-/// Frees an int dictionary
 #[no_mangle]
-pub extern "system" fn Java_org_apache_pinot_core_rust_PinotRustBridge_freeIntDictionary(
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeIntDictionaryBatchDecode<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    dict_ids: JIntArray<'local>,
+    output: JIntArray<'local>,
+) {
+    let len = env.get_array_length(&dict_ids).unwrap_or(0) as usize;
+    if len == 0 {
+        return;
+    }
+
+    let mut ids = vec![0i32; len];
+    if env.get_int_array_region(&dict_ids, 0, &mut ids).is_err() {
+        return;
+    }
+
+    let dicts = INT_DICTIONARIES.lock().unwrap();
+    if let Some(dict) = dicts.get(&handle) {
+        let mut results = vec![0i32; len];
+        for (i, &id) in ids.iter().enumerate() {
+            results[i] = dict.get_int(id).unwrap_or(0);
+        }
+        let _ = env.set_int_array_region(&output, 0, &results);
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeIntDictionarySize(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    let dicts = INT_DICTIONARIES.lock().unwrap();
+    match dicts.get(&handle) {
+        Some(dict) => dict.len() as jint,
+        None => 0,
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeFreeIntDictionary(
     _env: JNIEnv,
     _class: JClass,
     handle: jlong,
 ) {
-    if handle != 0 {
-        unsafe {
-            drop(Box::from_raw(handle as *mut OnHeapIntDictionary));
-        }
+    let mut dicts = INT_DICTIONARIES.lock().unwrap();
+    dicts.remove(&handle);
+}
+
+// ==================== Long Dictionary Functions ====================
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeCreateLongDictionary<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    sorted_values: JLongArray<'local>,
+) -> jlong {
+    let len = env.get_array_length(&sorted_values).unwrap_or(0) as usize;
+    if len == 0 {
+        return 0;
+    }
+
+    let mut buffer = vec![0i64; len];
+    if env.get_long_array_region(&sorted_values, 0, &mut buffer).is_err() {
+        return 0;
+    }
+
+    let dict = OnHeapLongDictionary::new(buffer);
+    let handle = get_next_handle();
+
+    let mut dicts = LONG_DICTIONARIES.lock().unwrap();
+    dicts.insert(handle, dict);
+
+    handle
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeLongDictionaryIndexOf(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    value: jlong,
+) -> jint {
+    let dicts = LONG_DICTIONARIES.lock().unwrap();
+    match dicts.get(&handle) {
+        Some(dict) => dict.index_of_long(value),
+        None => -1,
     }
 }
 
-// ============================================================================
-// Bitmap Functions
-// ============================================================================
-
-/// Computes AND of two bitmaps and returns cardinality
 #[no_mangle]
-pub extern "system" fn Java_org_apache_pinot_core_rust_PinotRustBridge_bitmapAndCardinality<'local>(
-    env: JNIEnv<'local>,
-    _class: JClass<'local>,
-    bitmap1: JLongArray<'local>,
-    bitmap2: JLongArray<'local>,
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeLongDictionaryGet(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    dict_id: jint,
 ) -> jlong {
-    // This is a simplified version - in practice you'd serialize RoaringBitmaps
-    let len1 = env.get_array_length(&bitmap1).unwrap_or(0) as usize;
-    let len2 = env.get_array_length(&bitmap2).unwrap_or(0) as usize;
-
-    // For demonstration, treat longs as doc IDs
-    let mut ids1 = vec![0i64; len1];
-    let mut ids2 = vec![0i64; len2];
-
-    let _ = env.get_long_array_region(&bitmap1, 0, &mut ids1);
-    let _ = env.get_long_array_region(&bitmap2, 0, &mut ids2);
-
-    let mut bm1 = roaring::RoaringBitmap::new();
-    let mut bm2 = roaring::RoaringBitmap::new();
-
-    for id in ids1 {
-        if id >= 0 {
-            bm1.insert(id as u32);
-        }
+    let dicts = LONG_DICTIONARIES.lock().unwrap();
+    match dicts.get(&handle) {
+        Some(dict) => dict.get_long(dict_id).unwrap_or(0),
+        None => 0,
     }
-    for id in ids2 {
-        if id >= 0 {
-            bm2.insert(id as u32);
-        }
-    }
-
-    bitmap_ops::and_cardinality(&bm1, &bm2) as jlong
 }
 
-/// Computes OR of two bitmaps and returns cardinality
 #[no_mangle]
-pub extern "system" fn Java_org_apache_pinot_core_rust_PinotRustBridge_bitmapOrCardinality<'local>(
-    env: JNIEnv<'local>,
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeLongDictionaryBatchDecode<'local>(
+    mut env: JNIEnv<'local>,
     _class: JClass<'local>,
-    bitmap1: JLongArray<'local>,
-    bitmap2: JLongArray<'local>,
+    handle: jlong,
+    dict_ids: JIntArray<'local>,
+    output: JLongArray<'local>,
+) {
+    let len = env.get_array_length(&dict_ids).unwrap_or(0) as usize;
+    if len == 0 {
+        return;
+    }
+
+    let mut ids = vec![0i32; len];
+    if env.get_int_array_region(&dict_ids, 0, &mut ids).is_err() {
+        return;
+    }
+
+    let dicts = LONG_DICTIONARIES.lock().unwrap();
+    if let Some(dict) = dicts.get(&handle) {
+        let mut results = vec![0i64; len];
+        for (i, &id) in ids.iter().enumerate() {
+            results[i] = dict.get_long(id).unwrap_or(0);
+        }
+        let _ = env.set_long_array_region(&output, 0, &results);
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeLongDictionarySize(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    let dicts = LONG_DICTIONARIES.lock().unwrap();
+    match dicts.get(&handle) {
+        Some(dict) => dict.len() as jint,
+        None => 0,
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeFreeLongDictionary(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    let mut dicts = LONG_DICTIONARIES.lock().unwrap();
+    dicts.remove(&handle);
+}
+
+// ==================== String Dictionary Functions ====================
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeCreateStringDictionary<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    sorted_values: JObjectArray<'local>,
 ) -> jlong {
-    let len1 = env.get_array_length(&bitmap1).unwrap_or(0) as usize;
-    let len2 = env.get_array_length(&bitmap2).unwrap_or(0) as usize;
-
-    let mut ids1 = vec![0i64; len1];
-    let mut ids2 = vec![0i64; len2];
-
-    let _ = env.get_long_array_region(&bitmap1, 0, &mut ids1);
-    let _ = env.get_long_array_region(&bitmap2, 0, &mut ids2);
-
-    let mut bm1 = roaring::RoaringBitmap::new();
-    let mut bm2 = roaring::RoaringBitmap::new();
-
-    for id in ids1 {
-        if id >= 0 {
-            bm1.insert(id as u32);
-        }
+    let len = env.get_array_length(&sorted_values).unwrap_or(0) as usize;
+    if len == 0 {
+        return 0;
     }
-    for id in ids2 {
-        if id >= 0 {
-            bm2.insert(id as u32);
+
+    let mut strings: Vec<String> = Vec::with_capacity(len);
+    for i in 0..len {
+        if let Ok(obj) = env.get_object_array_element(&sorted_values, i as i32) {
+            let jstr = JString::from(obj);
+            let owned_string = env.get_string(&jstr)
+                .map(|s| String::from(s.to_str().unwrap_or("")))
+                .unwrap_or_default();
+            strings.push(owned_string);
+        } else {
+            strings.push(String::new());
         }
     }
 
-    bitmap_ops::or_cardinality(&bm1, &bm2) as jlong
+    let dict = OnHeapStringDictionary::new(strings);
+    let handle = get_next_handle();
+
+    let mut dicts = STRING_DICTIONARIES.lock().unwrap();
+    dicts.insert(handle, dict);
+
+    handle
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeStringDictionaryIndexOf<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    value: JString<'local>,
+) -> jint {
+    let search_str: String = match env.get_string(&value) {
+        Ok(s) => String::from(s.to_str().unwrap_or("")),
+        Err(_) => return -1,
+    };
+
+    let dicts = STRING_DICTIONARIES.lock().unwrap();
+    match dicts.get(&handle) {
+        Some(dict) => dict.index_of_string(&search_str),
+        None => -1,
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeStringDictionaryGet<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    handle: jlong,
+    dict_id: jint,
+) -> JString<'local> {
+    let dicts = STRING_DICTIONARIES.lock().unwrap();
+    match dicts.get(&handle) {
+        Some(dict) => {
+            match dict.get_string(dict_id) {
+                Ok(v) => env.new_string(&v).unwrap_or_else(|_| env.new_string("").unwrap()),
+                Err(_) => env.new_string("").unwrap(),
+            }
+        }
+        None => env.new_string("").unwrap(),
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeStringDictionarySize(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) -> jint {
+    let dicts = STRING_DICTIONARIES.lock().unwrap();
+    match dicts.get(&handle) {
+        Some(dict) => dict.len() as jint,
+        None => 0,
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeDictionary_nativeFreeStringDictionary(
+    _env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+) {
+    let mut dicts = STRING_DICTIONARIES.lock().unwrap();
+    dicts.remove(&handle);
+}
+
+// ==================== Bitmap Functions ====================
+
+fn read_byte_array(env: &mut JNIEnv, array: &JByteArray) -> Option<Vec<u8>> {
+    let len = env.get_array_length(array).ok()? as usize;
+    if len == 0 {
+        return None;
+    }
+
+    let mut i8_buf = vec![0i8; len];
+    env.get_byte_array_region(array, 0, &mut i8_buf).ok()?;
+
+    Some(i8_buf.iter().map(|&b| b as u8).collect())
+}
+
+fn write_byte_array<'local>(env: &mut JNIEnv<'local>, data: &[u8]) -> JByteArray<'local> {
+    let result = env.new_byte_array(data.len() as i32).unwrap();
+    let i8_data: Vec<i8> = data.iter().map(|&b| b as i8).collect();
+    let _ = env.set_byte_array_region(&result, 0, &i8_data);
+    result
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeBitmap_nativeAndCardinality<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    bitmap1: JByteArray<'local>,
+    bitmap2: JByteArray<'local>,
+) -> jlong {
+    let buf1 = match read_byte_array(&mut env, &bitmap1) {
+        Some(b) => b,
+        None => return 0,
+    };
+    let buf2 = match read_byte_array(&mut env, &bitmap2) {
+        Some(b) => b,
+        None => return 0,
+    };
+
+    use roaring::RoaringBitmap;
+    let bm1 = match RoaringBitmap::deserialize_from(&buf1[..]) {
+        Ok(bm) => bm,
+        Err(_) => return 0,
+    };
+    let bm2 = match RoaringBitmap::deserialize_from(&buf2[..]) {
+        Ok(bm) => bm,
+        Err(_) => return 0,
+    };
+
+    (&bm1 & &bm2).len() as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeBitmap_nativeOrCardinality<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    bitmap1: JByteArray<'local>,
+    bitmap2: JByteArray<'local>,
+) -> jlong {
+    let buf1 = match read_byte_array(&mut env, &bitmap1) {
+        Some(b) => b,
+        None => return 0,
+    };
+    let buf2 = match read_byte_array(&mut env, &bitmap2) {
+        Some(b) => b,
+        None => return 0,
+    };
+
+    use roaring::RoaringBitmap;
+    let bm1 = match RoaringBitmap::deserialize_from(&buf1[..]) {
+        Ok(bm) => bm,
+        Err(_) => return 0,
+    };
+    let bm2 = match RoaringBitmap::deserialize_from(&buf2[..]) {
+        Ok(bm) => bm,
+        Err(_) => return 0,
+    };
+
+    (&bm1 | &bm2).len() as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeBitmap_nativeAndNotCardinality<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    bitmap1: JByteArray<'local>,
+    bitmap2: JByteArray<'local>,
+) -> jlong {
+    let buf1 = match read_byte_array(&mut env, &bitmap1) {
+        Some(b) => b,
+        None => return 0,
+    };
+
+    use roaring::RoaringBitmap;
+    let bm1 = match RoaringBitmap::deserialize_from(&buf1[..]) {
+        Ok(bm) => bm,
+        Err(_) => return 0,
+    };
+
+    let buf2 = match read_byte_array(&mut env, &bitmap2) {
+        Some(b) => b,
+        None => return bm1.len() as jlong,
+    };
+
+    let bm2 = match RoaringBitmap::deserialize_from(&buf2[..]) {
+        Ok(bm) => bm,
+        Err(_) => return bm1.len() as jlong,
+    };
+
+    (&bm1 - &bm2).len() as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeBitmap_nativeXorCardinality<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    bitmap1: JByteArray<'local>,
+    bitmap2: JByteArray<'local>,
+) -> jlong {
+    let buf1 = match read_byte_array(&mut env, &bitmap1) {
+        Some(b) => b,
+        None => return 0,
+    };
+    let buf2 = match read_byte_array(&mut env, &bitmap2) {
+        Some(b) => b,
+        None => return 0,
+    };
+
+    use roaring::RoaringBitmap;
+    let bm1 = match RoaringBitmap::deserialize_from(&buf1[..]) {
+        Ok(bm) => bm,
+        Err(_) => return 0,
+    };
+    let bm2 = match RoaringBitmap::deserialize_from(&buf2[..]) {
+        Ok(bm) => bm,
+        Err(_) => return 0,
+    };
+
+    (&bm1 ^ &bm2).len() as jlong
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeBitmap_nativeAnd<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    bitmap1: JByteArray<'local>,
+    bitmap2: JByteArray<'local>,
+) -> JByteArray<'local> {
+    let empty = env.new_byte_array(0).unwrap();
+
+    let buf1 = match read_byte_array(&mut env, &bitmap1) {
+        Some(b) => b,
+        None => return empty,
+    };
+    let buf2 = match read_byte_array(&mut env, &bitmap2) {
+        Some(b) => b,
+        None => return empty,
+    };
+
+    use roaring::RoaringBitmap;
+    let bm1 = match RoaringBitmap::deserialize_from(&buf1[..]) {
+        Ok(bm) => bm,
+        Err(_) => return empty,
+    };
+    let bm2 = match RoaringBitmap::deserialize_from(&buf2[..]) {
+        Ok(bm) => bm,
+        Err(_) => return empty,
+    };
+
+    let result = &bm1 & &bm2;
+    let mut serialized = Vec::new();
+    if result.serialize_into(&mut serialized).is_err() {
+        return empty;
+    }
+
+    write_byte_array(&mut env, &serialized)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeBitmap_nativeOr<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    bitmap1: JByteArray<'local>,
+    bitmap2: JByteArray<'local>,
+) -> JByteArray<'local> {
+    let empty = env.new_byte_array(0).unwrap();
+
+    let buf1 = match read_byte_array(&mut env, &bitmap1) {
+        Some(b) => b,
+        None => return empty,
+    };
+    let buf2 = match read_byte_array(&mut env, &bitmap2) {
+        Some(b) => b,
+        None => return empty,
+    };
+
+    use roaring::RoaringBitmap;
+    let bm1 = match RoaringBitmap::deserialize_from(&buf1[..]) {
+        Ok(bm) => bm,
+        Err(_) => return empty,
+    };
+    let bm2 = match RoaringBitmap::deserialize_from(&buf2[..]) {
+        Ok(bm) => bm,
+        Err(_) => return empty,
+    };
+
+    let result = &bm1 | &bm2;
+    let mut serialized = Vec::new();
+    if result.serialize_into(&mut serialized).is_err() {
+        return empty;
+    }
+
+    write_byte_array(&mut env, &serialized)
+}
+
+#[no_mangle]
+pub extern "system" fn Java_org_apache_pinot_core_native_NativeBitmap_nativeAndNot<'local>(
+    mut env: JNIEnv<'local>,
+    _class: JClass<'local>,
+    bitmap1: JByteArray<'local>,
+    bitmap2: JByteArray<'local>,
+) -> JByteArray<'local> {
+    let empty = env.new_byte_array(0).unwrap();
+
+    let buf1 = match read_byte_array(&mut env, &bitmap1) {
+        Some(b) => b,
+        None => return empty,
+    };
+
+    use roaring::RoaringBitmap;
+    let bm1 = match RoaringBitmap::deserialize_from(&buf1[..]) {
+        Ok(bm) => bm,
+        Err(_) => return empty,
+    };
+
+    let buf2 = match read_byte_array(&mut env, &bitmap2) {
+        Some(b) => b,
+        None => {
+            // Return bm1 as-is
+            let mut serialized = Vec::new();
+            if bm1.serialize_into(&mut serialized).is_err() {
+                return empty;
+            }
+            return write_byte_array(&mut env, &serialized);
+        }
+    };
+
+    let bm2 = match RoaringBitmap::deserialize_from(&buf2[..]) {
+        Ok(bm) => bm,
+        Err(_) => return empty,
+    };
+
+    let result = &bm1 - &bm2;
+    let mut serialized = Vec::new();
+    if result.serialize_into(&mut serialized).is_err() {
+        return empty;
+    }
+
+    write_byte_array(&mut env, &serialized)
 }
 
 #[cfg(test)]
 mod tests {
-    // JNI tests require a JVM, so we just verify compilation
     #[test]
     fn test_jni_compilation() {
-        // This test just ensures the JNI module compiles correctly
+        // This test just verifies the JNI module compiles
         assert!(true);
     }
 }

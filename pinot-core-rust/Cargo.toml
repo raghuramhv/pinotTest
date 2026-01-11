@@ -15,6 +15,9 @@ crate-type = ["cdylib", "rlib"]
 # JNI bindings for Java interop
 jni = "0.21"
 
+# Lazy static for global state
+lazy_static = "1.4"
+
 # Roaring bitmaps for efficient set operations
 roaring = "0.10"
 

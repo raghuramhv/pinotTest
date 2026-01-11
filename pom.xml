@@ -45,6 +45,7 @@
     <module>pinot-common</module>
     <module>pinot-clients</module>
     <module>pinot-server</module>
+    <module>pinot-core-rust</module>
     <module>pinot-core</module>
     <module>pinot-controller</module>
     <module>pinot-minion</module>
