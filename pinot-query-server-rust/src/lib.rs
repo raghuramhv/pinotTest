@@ -35,6 +35,7 @@ pub mod channel;
 pub mod config;
 pub mod error;
 pub mod exchange;
+pub mod filter;
 pub mod jni;
 pub mod mailbox;
 pub mod metrics;
@@ -51,6 +52,7 @@ pub use exchange::{BlockExchange, ExchangeType};
 pub use mailbox::{MailboxId, MailboxService, ReceivingMailbox, SendingMailbox};
 pub use metrics::QueryMetrics;
 pub use operator::{OpChain, Operator};
+pub use filter::{FilterEvaluator, FilterPredicate, ScalarValue};
 pub use scheduler::QueryScheduler;
 
 /// Query server version

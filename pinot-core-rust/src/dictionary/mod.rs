@@ -21,6 +21,7 @@ mod immutable;
 mod mutable;
 mod traits;
 mod types;
+pub mod readers;
 
 #[cfg(test)]
 mod proptest_tests;
@@ -29,6 +30,7 @@ pub use immutable::*;
 pub use mutable::*;
 pub use traits::*;
 pub use types::*;
+pub use readers::*;
 
 use thiserror::Error;
 

@@ -38,6 +38,9 @@ arc-swap = "1.6"
 # Memory management
 memory-stats = "1.1"
 
+# Regex for filter patterns
+regex = "1.10"
+
 # Utilities
 thiserror = "1.0"
 anyhow = "1.0"

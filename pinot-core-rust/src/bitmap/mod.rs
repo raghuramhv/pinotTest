@@ -6,10 +6,12 @@
 mod doc_id_set;
 mod doc_id_iterator;
 mod filter_operators;
+mod scan_operator;
 
 pub use doc_id_set::*;
 pub use doc_id_iterator::*;
 pub use filter_operators::*;
+pub use scan_operator::*;
 
 use thiserror::Error;
 
