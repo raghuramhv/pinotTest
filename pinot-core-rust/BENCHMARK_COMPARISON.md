@@ -1,11 +1,66 @@
 # Rust vs Java Performance Benchmark Comparison
 
-## Test Environment
-- **Platform**: Linux 4.4.0
-- **Rust**: Release build with LTO enabled
-- **Java**: OpenJDK with -Xms512m -Xmx512m
+## ⚠️ Run Benchmarks Yourself
 
-## Summary
+**To verify these results, run the benchmarks on your own hardware.**
+
+Results vary based on CPU, memory, OS, and JVM version. The numbers below are from a specific test run and should be reproduced before making engineering decisions.
+
+---
+
+## How to Run Benchmarks
+
+### Step 1: Run Rust Benchmarks (Criterion)
+
+```bash
+cd pinot-core-rust
+
+# Run all benchmarks
+cargo bench
+
+# Or run specific benchmark suites:
+cargo bench --bench aggregation_bench
+cargo bench --bench dictionary_bench
+cargo bench --bench bitmap_bench
+```
+
+### Step 2: Run Java Benchmarks
+
+```bash
+cd pinot-core-rust/comparison_benchmark
+
+# Compile the Java benchmark
+javac JavaBenchmark.java
+
+# Run with JVM optimizations
+java -server -Xms512m -Xmx512m JavaBenchmark
+```
+
+For RoaringBitmap comparison (fairer than BitSet):
+```bash
+# Download RoaringBitmap
+wget https://repo1.maven.org/maven2/org/roaringbitmap/RoaringBitmap/1.0.0/RoaringBitmap-1.0.0.jar
+
+# Compile and run
+javac -cp RoaringBitmap-1.0.0.jar RoaringBenchmark.java
+java -cp .:RoaringBitmap-1.0.0.jar RoaringBenchmark
+```
+
+---
+
+## Test Environment
+
+| Property | Value |
+|----------|-------|
+| Platform | Linux 4.4.0 |
+| Rust | Release build with LTO enabled |
+| Java | OpenJDK with -Xms512m -Xmx512m |
+
+---
+
+## Sample Results
+
+### Summary Table
 
 | Benchmark | Rust | Java | Speedup |
 |-----------|------|------|---------|
@@ -19,18 +74,12 @@
 | int_dict_lookup (1k ops) | 3.4 µs | 114.6 µs | **33.7x faster** |
 | int_dict_decode (1k ops) | 314 ns | 15.3 µs | **48.7x faster** |
 | mutable_dict_insert (1k) | 79.0 µs | 215.4 µs | **2.7x faster** |
-| **Bitmaps (Java BitSet)** | | | |
-| bitmap_and | 46.9 µs | 4.3 µs | 0.09x (Java faster*) |
-| bitmap_or | 41.6 µs | 3.7 µs | 0.09x (Java faster*) |
+| **Bitmaps** | | | |
+| bitmap_and | 46.9 µs | 4.3 µs* | 0.09x (Java faster*) |
+| bitmap_or | 41.6 µs | 3.7 µs* | 0.09x (Java faster*) |
 | bitmap_iteration_5k | 18.5 µs | 140.3 µs | **7.6x faster** |
-| **Bitmap Cardinality (Rust RoaringBitmap)** | | | |
-| and_cardinality | 1.02 µs | N/A | - |
-| or_cardinality | 1.22 µs | N/A | - |
-| and_not_cardinality | 0.96 µs | N/A | - |
 
-*Note: Java BitSet is fundamentally different from RoaringBitmap. BitSet uses a simple bit array which is very fast for dense bitmaps but uses more memory. RoaringBitmap (used in both Rust and Pinot) is optimized for sparse bitmaps.
-
-## Detailed Results
+*Note: Java uses `BitSet` (simple bit array), Rust uses `RoaringBitmap` (compressed sparse bitmap). These are NOT equivalent data structures. BitSet is faster for dense bitmaps but uses significantly more memory.
 
 ### Rust Benchmark Results (criterion)
 
@@ -49,23 +98,17 @@ bitmap_iteration_5k      time:   [18.043 µs 18.545 µs 19.269 µs]
 bitmap_and               time:   [46.712 µs 46.877 µs 47.057 µs]
 bitmap_or                time:   [41.469 µs 41.626 µs 41.792 µs]
 bitmap_not               time:   [13.056 µs 13.077 µs 13.104 µs]
-bitmap_advance_1k        time:   [36.260 µs 36.495 µs 36.882 µs]
 cardinality/and          time:   [1.0175 µs 1.0205 µs 1.0237 µs]
 cardinality/or           time:   [1.2143 µs 1.2241 µs 1.2356 µs]
-cardinality/and_not      time:   [957.78 ns 960.56 ns 963.67 ns]
 
 # Dictionaries
 int_dict_lookup          time:   [3.3343 µs 3.3530 µs 3.3801 µs]
 int_dict_decode          time:   [311.88 ns 313.75 ns 315.92 ns]
 string_dict_lookup       time:   [60.223 µs 61.880 µs 64.804 µs]
 mutable_int_dict_insert  time:   [78.857 µs 79.015 µs 79.172 µs]
-int_dict_range/100       time:   [2.5435 µs 2.5492 µs 2.5554 µs]
-int_dict_range/500       time:   [16.131 µs 16.180 µs 16.237 µs]
-int_dict_range/1000      time:   [32.868 µs 33.061 µs 33.318 µs]
-int_dict_range/2000      time:   [62.650 µs 62.691 µs 62.740 µs]
 ```
 
-### Java Benchmark Results
+### Java Benchmark Results (JavaBenchmark.java)
 
 ```
 # Aggregations
@@ -80,11 +123,13 @@ int_dict_lookup:          114.568 µs
 int_dict_decode:          15277.800 ns (15.3 µs)
 mutable_int_dict_insert:  215.400 µs
 
-# Bitmaps (BitSet, not RoaringBitmap)
+# Bitmaps (BitSet - NOT comparable to RoaringBitmap)
 bitmap_and:               4.277 µs
 bitmap_or:                3.690 µs
 bitmap_iteration_5k:      140.311 µs
 ```
+
+---
 
 ## Analysis
 
@@ -104,80 +149,72 @@ bitmap_iteration_5k:      140.311 µs
    - More efficient iterator implementation
    - No object allocation per iteration
 
-### Considerations
+### Important Caveats
 
-1. **Bitmap Operations (AND/OR)**
+1. **Bitmap AND/OR Operations**
    - Java BitSet is faster for dense bitmaps due to simpler implementation
-   - RoaringBitmap (used in both) is optimized for sparse data common in Pinot
-   - Memory usage: RoaringBitmap uses ~10x less memory for sparse bitmaps
+   - RoaringBitmap (used in both Rust and Pinot) is optimized for sparse data
+   - For fair comparison, use RoaringBitmap in both languages
 
-2. **Memory Usage**
-   - Rust: ~40 bytes per dictionary entry (value + hash map entry)
-   - Java: ~56-72 bytes per dictionary entry (object headers, hash entries)
+2. **Simple Benchmarks vs Real Workloads**
+   - These measure isolated operations
+   - Real-world performance depends on memory pressure, GC, and access patterns
+
+3. **JIT Compilation**
+   - Java can approach Rust performance after warmup for simple operations
+   - The Java benchmark uses simple timing, not JMH
+
+4. **Memory Usage**
+   - Rust: ~40 bytes per dictionary entry
+   - Java: ~56-72 bytes per dictionary entry
    - Estimated 30-40% memory reduction with Rust
 
-3. **JNI Overhead**
-   - Each JNI call adds ~50-100ns overhead
-   - Best used for batch operations, not single value lookups
-   - Amortized over large arrays, overhead becomes negligible
+---
 
-## Recommendations for Pinot
+## Recording Your Results
 
-### High-Impact Areas for Rust Integration
+Run benchmarks on your hardware and fill in:
 
-1. **Segment Scanning** - Process entire columns in Rust
-   - Potential: 8-12x speedup for aggregations
-   - Memory: 30-40% reduction
+### Your Test Environment
 
-2. **Dictionary Encoding/Decoding** - Batch operations
-   - Potential: 30-50x speedup for lookups
-   - Critical for query performance
+| Property | Value |
+|----------|-------|
+| Date | |
+| CPU | |
+| RAM | |
+| OS | |
+| Rust version | |
+| Java version | |
 
-3. **Filter Evaluation** - Complex predicates
-   - Potential: 5-10x speedup for boolean operations
-   - Bitmap cardinality operations very fast
+### Your Results
 
-### Integration Strategy
+| Benchmark | Rust (µs) | Java (µs) | Speedup |
+|-----------|-----------|-----------|---------|
+| sum_10k | | | |
+| count_10k | | | |
+| min_10k | | | |
+| max_10k | | | |
+| int_dict_lookup | | | |
+| int_dict_decode | | | |
+| bitmap_iteration | | | |
 
-```java
-// Example: Batch aggregation via JNI
-public class PinotRustBridge {
-    static { System.loadLibrary("pinot_core"); }
+---
 
-    // Process entire column at once - amortizes JNI overhead
-    public static native double sumDoubleArray(double[] values);
-    public static native long countWithNulls(double[] values, long[] nullBitmap);
+## Improving the Comparison
 
-    // Dictionary batch operations
-    public static native long createIntDictionary(int[] values);
-    public static native void batchDecode(long dictHandle, int[] dictIds, int[] output);
-}
-```
+For more rigorous benchmarking:
 
-## Caveats
+1. **Use JMH for Java** - More accurate than simple System.nanoTime()
+2. **Use same data structures** - Compare RoaringBitmap in both languages
+3. **Test with realistic data** - Generate data matching your workload
+4. **Consider GC impact** - Run longer tests to see GC effects
+5. **Profile memory usage** - Compare heap sizes and allocation rates
 
-1. **Simple Benchmarks** - Real-world performance depends on:
-   - Data distribution
-   - Cache effects
-   - Concurrent access patterns
-   - Integration overhead
+---
 
-2. **JIT Compilation** - Java can approach Rust performance after warmup for:
-   - Simple loops
-   - Numeric operations
-   - Hot paths
+## Questions?
 
-3. **Memory Management** - Rust requires explicit lifecycle management
-   - Need to free native resources
-   - Potential for memory leaks if not careful
-
-## Conclusion
-
-Rust provides significant performance improvements for:
-- **Aggregations**: 5-12x faster
-- **Dictionary operations**: 30-50x faster
-- **Iteration**: 7-8x faster
-- **Memory**: 30-40% reduction
-
-The Rust implementation is well-suited for batch processing in Pinot's segment scanning
-and aggregation phases, where the JNI overhead is amortized over large data volumes.
+If you have questions about the benchmark methodology:
+1. Open an issue with your benchmark output
+2. Include your test environment details
+3. Describe any unexpected results
