@@ -48,85 +48,87 @@ java -cp .:RoaringBitmap-1.0.0.jar RoaringBenchmark
 
 ---
 
-## Test Environment
+## Test Environment (Actual Run: January 2026)
 
 | Property | Value |
 |----------|-------|
 | Platform | Linux 4.4.0 |
 | Rust | Release build with LTO enabled |
-| Java | OpenJDK with -Xms512m -Xmx512m |
+| Java | OpenJDK 21.0.9 |
 
 ---
 
-## Sample Results
+## Measured Results
+
+These are **actual benchmark measurements** from this environment, not estimates.
 
 ### Summary Table
 
 | Benchmark | Rust | Java | Speedup |
 |-----------|------|------|---------|
 | **Aggregations** | | | |
-| sum_10k | 11.8 µs | 95.7 µs | **8.1x faster** |
-| count_10k | 0.35 ns | 73.4 ns | **210x faster** |
-| min_10k | 6.1 µs | 78.3 µs | **12.8x faster** |
-| max_10k | 6.1 µs | 70.3 µs | **11.5x faster** |
-| avg_10k | 11.8 µs | 62.3 µs | **5.3x faster** |
+| sum_10k | 11.82 µs | 78.14 µs | **6.6x faster** |
+| count_10k | 0.60 ns | 79.10 ns | **132x faster** |
+| min_10k | 6.25 µs | 90.15 µs | **14.4x faster** |
+| max_10k | 6.14 µs | 93.43 µs | **15.2x faster** |
+| avg_10k | 11.82 µs | 69.79 µs | **5.9x faster** |
 | **Dictionaries** | | | |
-| int_dict_lookup (1k ops) | 3.4 µs | 114.6 µs | **33.7x faster** |
-| int_dict_decode (1k ops) | 314 ns | 15.3 µs | **48.7x faster** |
-| mutable_dict_insert (1k) | 79.0 µs | 215.4 µs | **2.7x faster** |
+| int_dict_lookup (1k ops) | 3.57 µs | 115.47 µs | **32.3x faster** |
+| int_dict_decode (1k ops) | 317 ns | 15.37 µs | **48.5x faster** |
+| mutable_dict_insert (1k) | 80.29 µs | 228.41 µs | **2.8x faster** |
 | **Bitmaps** | | | |
-| bitmap_and | 46.9 µs | 4.3 µs* | 0.09x (Java faster*) |
-| bitmap_or | 41.6 µs | 3.7 µs* | 0.09x (Java faster*) |
-| bitmap_iteration_5k | 18.5 µs | 140.3 µs | **7.6x faster** |
+| bitmap_and | 48.04 µs | 3.95 µs* | 0.08x (Java faster*) |
+| bitmap_or | 43.96 µs | 3.51 µs* | 0.08x (Java faster*) |
+| bitmap_iteration_5k | 19.61 µs | 124.09 µs | **6.3x faster** |
 
-*Note: Java uses `BitSet` (simple bit array), Rust uses `RoaringBitmap` (compressed sparse bitmap). These are NOT equivalent data structures. BitSet is faster for dense bitmaps but uses significantly more memory.
+*Note: Java uses `BitSet` (simple bit array), Rust uses `RoaringBitmap` (compressed sparse bitmap). These are NOT equivalent data structures. BitSet is faster for dense bitmaps but uses significantly more memory. For a fair comparison, run RoaringBenchmark.java which uses the same RoaringBitmap library.
 
 ### Rust Benchmark Results (criterion)
 
 ```
 # Aggregations
-sum_10k                  time:   [11.830 µs 11.835 µs 11.840 µs]
-count_10k                time:   [352.30 ps 354.13 ps 356.25 ps]
-min_max/min              time:   [6.0818 µs 6.1016 µs 6.1256 µs]
-min_max/max              time:   [6.0491 µs 6.0673 µs 6.0892 µs]
-avg_10k                  time:   [11.810 µs 11.813 µs 11.818 µs]
-group_by_sum_100_groups  time:   [5.0679 µs 5.1075 µs 5.1547 µs]
-executor_all_aggs        time:   [36.278 µs 36.299 µs 36.326 µs]
+sum_10k                  time:   [11.820 µs 11.825 µs 11.830 µs]
+count_10k                time:   [596.41 ps 597.31 ps 598.41 ps]
+min_max/min              time:   [6.2460 µs 6.2526 µs 6.2606 µs]
+min_max/max              time:   [6.1242 µs 6.1394 µs 6.1579 µs]
+avg_10k                  time:   [11.815 µs 11.819 µs 11.822 µs]
+group_by_sum_100_groups  time:   [5.2777 µs 5.2919 µs 5.3066 µs]
+executor_all_aggs        time:   [36.735 µs 36.811 µs 36.907 µs]
 
 # Bitmaps (RoaringBitmap)
-bitmap_iteration_5k      time:   [18.043 µs 18.545 µs 19.269 µs]
-bitmap_and               time:   [46.712 µs 46.877 µs 47.057 µs]
-bitmap_or                time:   [41.469 µs 41.626 µs 41.792 µs]
-bitmap_not               time:   [13.056 µs 13.077 µs 13.104 µs]
-cardinality/and          time:   [1.0175 µs 1.0205 µs 1.0237 µs]
-cardinality/or           time:   [1.2143 µs 1.2241 µs 1.2356 µs]
+bitmap_iteration_5k      time:   [19.023 µs 19.610 µs 20.492 µs]
+bitmap_and               time:   [48.037 µs 48.179 µs 48.349 µs]
+bitmap_or                time:   [43.959 µs 44.157 µs 44.370 µs]
+bitmap_not               time:   [13.349 µs 13.431 µs 13.527 µs]
+cardinality/and          time:   [973.11 ns 982.07 ns 993.27 ns]
+cardinality/or           time:   [1.1179 µs 1.1337 µs 1.1550 µs]
 
 # Dictionaries
-int_dict_lookup          time:   [3.3343 µs 3.3530 µs 3.3801 µs]
-int_dict_decode          time:   [311.88 ns 313.75 ns 315.92 ns]
-string_dict_lookup       time:   [60.223 µs 61.880 µs 64.804 µs]
-mutable_int_dict_insert  time:   [78.857 µs 79.015 µs 79.172 µs]
+int_dict_lookup          time:   [3.4989 µs 3.5661 µs 3.6351 µs]
+int_dict_decode          time:   [314.69 ns 317.16 ns 320.28 ns]
+string_dict_lookup       time:   [62.045 µs 62.677 µs 63.343 µs]
+mutable_int_dict_insert  time:   [79.822 µs 80.293 µs 80.913 µs]
 ```
 
 ### Java Benchmark Results (JavaBenchmark.java)
 
 ```
 # Aggregations
-sum_10k:                  95.749 µs
-count_10k:                73.400 ns
-min_max/min:              78.348 µs
-min_max/max:              70.345 µs
-avg_10k:                  62.284 µs
+sum_10k:                  78.137 µs
+count_10k:                79.100 ns
+min_max/min:              90.146 µs
+min_max/max:              93.428 µs
+avg_10k:                  69.788 µs
 
 # Dictionaries
-int_dict_lookup:          114.568 µs
-int_dict_decode:          15277.800 ns (15.3 µs)
-mutable_int_dict_insert:  215.400 µs
+int_dict_lookup:          115.470 µs
+int_dict_decode:          15372.000 ns (15.37 µs)
+mutable_int_dict_insert:  228.407 µs
 
 # Bitmaps (BitSet - NOT comparable to RoaringBitmap)
-bitmap_and:               4.277 µs
-bitmap_or:                3.690 µs
-bitmap_iteration_5k:      140.311 µs
+bitmap_and:               3.945 µs
+bitmap_or:                3.514 µs
+bitmap_iteration_5k:      124.089 µs
 ```
 
 ---
